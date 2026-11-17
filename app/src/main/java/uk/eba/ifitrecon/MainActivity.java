@@ -86,7 +86,8 @@ public class MainActivity extends Activity {
 
         askStorage();
         startServer();
-        log("iFit Recon 0.1 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        startFollower();
+        log("iFit Recon 0.2 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
@@ -264,8 +265,8 @@ public class MainActivity extends Activity {
             try (ServerSocket ss = new ServerSocket(PORT)) {
                 while (true) {
                     try (Socket s = ss.accept()) {
-                        new BufferedReader(new InputStreamReader(s.getInputStream())).readLine();
-                        byte[] body = report.toString().getBytes(StandardCharsets.UTF_8);
+                        String req = new BufferedReader(new InputStreamReader(s.getInputStream())).readLine();
+                        byte[] body = route(req).getBytes(StandardCharsets.UTF_8);
                         OutputStream o = s.getOutputStream();
                         o.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
                                 + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
@@ -277,6 +278,92 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+
+    // ---------- v0.2: background follower + file endpoints ----------
+    private final java.util.ArrayDeque<String> live = new java.util.ArrayDeque<>();
+
+    private void startFollower() {
+        new Thread(() -> {
+            java.util.Map<String, Long> pos = new java.util.HashMap<>();
+            while (true) {
+                List<File> files = new ArrayList<>();
+                File[] dirs = new File(Environment.getExternalStorageDirectory(), "Android/data").listFiles();
+                if (dirs != null) for (File d : dirs) {
+                    File f = new File(d, "files/.valinorlogs/log.latest.txt");
+                    if (f.exists()) files.add(f);
+                }
+                File[] eru = new File(Environment.getExternalStorageDirectory(), "eru").listFiles();
+                if (eru != null) for (File f : eru) if (f.getName().endsWith(".logs.txt")) files.add(f);
+                for (File f : files) {
+                    String k = f.getAbsolutePath();
+                    long len = f.length();
+                    Long p = pos.get(k);
+                    if (p == null || len < p) { pos.put(k, len); continue; }
+                    if (len == p) continue;
+                    try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
+                        raf.seek(p);
+                        byte[] buf = new byte[(int) Math.min(len - p, 256_000)];
+                        raf.readFully(buf);
+                        pos.put(k, p + buf.length);
+                        String tag = k.contains("/data/") ? k.split("/data/")[1].split("/")[0] : f.getName();
+                        synchronized (live) {
+                            for (String l : new String(buf, StandardCharsets.UTF_8).split("\n"))
+                                if (!l.trim().isEmpty()) { live.addLast("[" + tag + "] " + l); if (live.size() > 4000) live.removeFirst(); }
+                        }
+                    } catch (Exception ignored) {}
+                }
+                try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            }
+        }).start();
+    }
+
+    private String route(String req) {
+        try {
+            String path = req == null ? "/" : req.split(" ")[1];
+            String q = path.contains("?") ? path.substring(path.indexOf('?') + 1) : "";
+            java.util.Map<String, String> args = new java.util.HashMap<>();
+            for (String kv : q.split("&")) if (kv.contains("="))
+                args.put(kv.substring(0, kv.indexOf('=')), java.net.URLDecoder.decode(kv.substring(kv.indexOf('=') + 1), "UTF-8"));
+            int n = args.containsKey("n") ? Integer.parseInt(args.get("n")) : 400;
+            String grep = args.get("grep");
+            if (path.startsWith("/live")) {
+                StringBuilder sb = new StringBuilder();
+                synchronized (live) {
+                    List<String> l = new ArrayList<>(live);
+                    for (int i = Math.max(0, l.size() - n); i < l.size(); i++)
+                        if (grep == null || l.get(i).toLowerCase(Locale.UK).contains(grep.toLowerCase(Locale.UK))) sb.append(l.get(i)).append('\n');
+                }
+                return sb.toString();
+            }
+            if (path.startsWith("/tail")) return tail(new File(args.get("f")), n, grep);
+            if (path.startsWith("/ls")) {
+                File[] kids = new File(args.get("d")).listFiles();
+                if (kids == null) return "cannot list";
+                StringBuilder sb = new StringBuilder();
+                for (File k : kids) sb.append(k.isDirectory() ? "d " : "- ").append(k.length()).append(' ').append(stamp(k.lastModified())).append(' ').append(k.getName()).append('\n');
+                return sb.toString();
+            }
+            if (path.startsWith("/sh")) return exec(args.get("c"));
+            return report + "\nEndpoints: /live?n=&grep=  /tail?f=&n=&grep=  /ls?d=  /sh?c=\n";
+        } catch (Exception e) { return "error: " + e; }
+    }
+
+    private String tail(File f, int n, String grep) {
+        try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
+            long len = raf.length();
+            long start = Math.max(0, len - 2_000_000);
+            raf.seek(start);
+            byte[] buf = new byte[(int) (len - start)];
+            raf.readFully(buf);
+            String[] lines = new String(buf, StandardCharsets.UTF_8).split("\n");
+            List<String> keep = new ArrayList<>();
+            for (String l : lines) if (grep == null || l.toLowerCase(Locale.UK).contains(grep.toLowerCase(Locale.UK))) keep.add(l);
+            StringBuilder sb = new StringBuilder();
+            for (int i = Math.max(0, keep.size() - n); i < keep.size(); i++) sb.append(keep.get(i)).append('\n');
+            return sb.toString();
+        } catch (Exception e) { return "error: " + e; }
+    }
+
     // ---------- helpers ----------
     private String exec(String cmd) {
         try {
@@ -284,7 +371,7 @@ public class MainActivity extends Activity {
             StringBuilder sb = new StringBuilder("$ " + cmd + "\n");
             try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
                 String l; int c = 0;
-                while ((l = r.readLine()) != null && c++ < 40) sb.append(l).append('\n');
+                while ((l = r.readLine()) != null && c++ < 2000) sb.append(l).append('\n');
             }
             return sb.toString().trim();
         } catch (Exception e) { return "$ " + cmd + " -> " + e.getMessage(); }
