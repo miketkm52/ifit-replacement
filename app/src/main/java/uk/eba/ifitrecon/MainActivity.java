@@ -88,9 +88,9 @@ public class MainActivity extends Activity {
 
         LinearLayout ctl = new LinearLayout(this);
         ctl.setOrientation(LinearLayout.HORIZONTAL);
-        for (String b : new String[]{"start", "pause", "stop", "res_down", "res_up"}) {
-            final String key = b;
-            ctl.addView(button(b.replace("res_down", "Res -").replace("res_up", "Res +").toUpperCase(Locale.UK), v -> press(key)));
+        for (String bn : new String[]{"start", "pause", "stop", "res_down", "res_up"}) {
+            final String key = bn;
+            ctl.addView(button(bn.replace("res_down", "Res -").replace("res_up", "Res +").toUpperCase(Locale.UK), v -> press(key)));
         }
         ctl.addView(button("Connect ADB", v -> new Thread(() -> log(adb("echo ADB OK as $(id -un)"))).start()));
         root.addView(ctl);
