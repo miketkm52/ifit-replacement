@@ -1,0 +1,15 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'uk.eba.ifitrecon'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'uk.eba.ifitrecon'
+        minSdk 21
+        //noinspection ExpiredTargetSdkVersion  (sideloaded only; keeps legacy storage access)
+        targetSdk 29
+        versionCode 1
+        versionName '0.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
