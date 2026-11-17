@@ -7,8 +7,8 @@ android {
         minSdk 21
         //noinspection ExpiredTargetSdkVersion  (sideloaded only; keeps legacy storage access)
         targetSdk 29
-        versionCode 3
-        versionName '0.3'
+        versionCode 4
+        versionName '0.4'
     }
     signingConfigs {
         test { storeFile file('test.keystore'); storePassword 'ifitrecon'; keyAlias 'test'; keyPassword 'ifitrecon' }
@@ -18,5 +18,3 @@ android {
     packaging { resources { excludes += ['META-INF/*'] } }
     lint { abortOnError false; checkReleaseBuilds false }
 }
-
-dependencies { implementation 'dev.mobile:dadb:1.2.9' }

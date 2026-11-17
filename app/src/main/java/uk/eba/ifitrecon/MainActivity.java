@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
     private TextView stats;
     private final java.util.Map<String, String> metrics = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Pattern CHANGED = Pattern.compile("SDS Changed ([A-Z_]+) from (.*) to (.*)$");
-    private dadb.Dadb dadbConn;
+    private AdbClient dadbConn;
     private ScrollView scroll;
     private final StringBuilder report = new StringBuilder();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
         askStorage();
         startServer();
         startFollower();
-        log("iFit Recon 0.3 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        log("iFit Recon 0.4 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
@@ -424,11 +424,9 @@ public class MainActivity extends Activity {
     private synchronized String adb(String cmd) {
         try {
             if (dadbConn == null) {
-                File priv = new File(getFilesDir(), "adbkey"), pub = new File(getFilesDir(), "adbkey.pub");
-                if (!priv.exists()) dadb.AdbKeyPair.generate(priv, pub);
-                dadbConn = dadb.Dadb.create("127.0.0.1", 5555, dadb.AdbKeyPair.read(priv, pub));
+                dadbConn = new AdbClient("127.0.0.1", 5555, getFilesDir());
             }
-            return "$ " + cmd + "\n" + dadbConn.shell(cmd).getAllOutput();
+            return "$ " + cmd + "\n" + dadbConn.shell(cmd);
         } catch (Throwable e) {
             try { if (dadbConn != null) dadbConn.close(); } catch (Exception ignored) {}
             dadbConn = null;
