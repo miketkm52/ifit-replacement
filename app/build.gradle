@@ -10,6 +10,10 @@ android {
         versionCode 2
         versionName '0.2'
     }
+    signingConfigs {
+        test { storeFile file('test.keystore'); storePassword 'ifitrecon'; keyAlias 'test'; keyPassword 'ifitrecon' }
+    }
+    buildTypes { debug { signingConfig signingConfigs.test } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     lint { abortOnError false; checkReleaseBuilds false }
 }
