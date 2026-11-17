@@ -52,6 +52,10 @@ public class MainActivity extends Activity {
     private static final int PORT = 8080;
 
     private TextView out;
+    private TextView stats;
+    private final java.util.Map<String, String> metrics = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Pattern CHANGED = Pattern.compile("SDS Changed ([A-Z_]+) from (.*) to (.*)$");
+    private dadb.Dadb dadbConn;
     private ScrollView scroll;
     private final StringBuilder report = new StringBuilder();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -74,6 +78,23 @@ public class MainActivity extends Activity {
         bar.addView(button("Storage access", v -> askStorage()));
         root.addView(bar);
 
+        stats = new TextView(this);
+        stats.setTextColor(Color.WHITE);
+        stats.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        stats.setTextSize(30);
+        stats.setPadding(16, 8, 16, 8);
+        stats.setText("Waiting for data...");
+        root.addView(stats);
+
+        LinearLayout ctl = new LinearLayout(this);
+        ctl.setOrientation(LinearLayout.HORIZONTAL);
+        for (String b : new String[]{"start", "pause", "stop", "res_down", "res_up"}) {
+            final String key = b;
+            ctl.addView(button(b.replace("res_down", "Res -").replace("res_up", "Res +").toUpperCase(Locale.UK), v -> press(key)));
+        }
+        ctl.addView(button("Connect ADB", v -> new Thread(() -> log(adb("echo ADB OK as $(id -un)"))).start()));
+        root.addView(ctl);
+
         out = new TextView(this);
         out.setTextColor(Color.parseColor("#c9d1d9"));
         out.setTypeface(Typeface.MONOSPACE);
@@ -87,7 +108,7 @@ public class MainActivity extends Activity {
         askStorage();
         startServer();
         startFollower();
-        log("iFit Recon 0.2 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        log("iFit Recon 0.3 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
@@ -308,7 +329,7 @@ public class MainActivity extends Activity {
                         String tag = k.contains("/data/") ? k.split("/data/")[1].split("/")[0] : f.getName();
                         synchronized (live) {
                             for (String l : new String(buf, StandardCharsets.UTF_8).split("\n"))
-                                if (!l.trim().isEmpty()) { live.addLast("[" + tag + "] " + l); if (live.size() > 4000) live.removeFirst(); }
+                                if (!l.trim().isEmpty()) { parseMetric(l); live.addLast("[" + tag + "] " + l); if (live.size() > 4000) live.removeFirst(); }
                         }
                     } catch (Exception ignored) {}
                 }
@@ -344,7 +365,13 @@ public class MainActivity extends Activity {
                 return sb.toString();
             }
             if (path.startsWith("/sh")) return exec(args.get("c"));
-            return report + "\nEndpoints: /live?n=&grep=  /tail?f=&n=&grep=  /ls?d=  /sh?c=\n";
+            if (path.startsWith("/adb")) return adb(args.get("c"));
+            if (path.startsWith("/services")) return services();
+            if (path.startsWith("/metrics")) return metrics.toString();
+            if (path.startsWith("/set")) { prefs().edit().putString("btn_" + args.get("k"), args.get("v")).apply(); return "ok " + args.get("k") + " = " + args.get("v"); }
+            if (path.startsWith("/press")) { String k = args.get("k"); String c = prefs().getString("btn_" + k, null); return c == null ? "not wired" : adb(c); }
+            if (path.startsWith("/get")) return prefs().getAll().toString();
+            return report + "\nEndpoints: /live /tail /ls /sh /adb?c= /services /metrics /set?k=&v= /press?k= /get\n";
         } catch (Exception e) { return "error: " + e; }
     }
 
@@ -362,6 +389,74 @@ public class MainActivity extends Activity {
             for (int i = Math.max(0, keep.size() - n); i < keep.size(); i++) sb.append(keep.get(i)).append('\n');
             return sb.toString();
         } catch (Exception e) { return "error: " + e; }
+    }
+
+
+    // ---------- v0.3: metrics, buttons, ADB ----------
+    private void parseMetric(String line) {
+        java.util.regex.Matcher m = CHANGED.matcher(line.trim());
+        if (m.find()) {
+            metrics.put(m.group(1), m.group(3).trim());
+            ui.post(this::renderStats);
+        }
+    }
+
+    private void renderStats() {
+        stats.setText(String.format(Locale.UK, "%s   RES %s   RPM %s   W %s   HR %s",
+                metrics.getOrDefault("CONSOLE_STATE", "?"),
+                strip(metrics.get("RESISTANCE")), strip(metrics.get("RPM")),
+                strip(metrics.get("WATTS")), strip(metrics.get("PULSE"))));
+    }
+
+    private static String strip(String v) {
+        if (v == null) return "-";
+        return v.replaceAll("[^0-9.\\-].*$", "").replaceAll("\\.0$", "");
+    }
+
+    private android.content.SharedPreferences prefs() { return getSharedPreferences("buttons", MODE_PRIVATE); }
+
+    private void press(String key) {
+        String cmd = prefs().getString("btn_" + key, null);
+        if (cmd == null) { log("[" + key + "] not wired yet"); return; }
+        new Thread(() -> log("[" + key + "] " + adb(cmd))).start();
+    }
+
+    private synchronized String adb(String cmd) {
+        try {
+            if (dadbConn == null) {
+                File priv = new File(getFilesDir(), "adbkey"), pub = new File(getFilesDir(), "adbkey.pub");
+                if (!priv.exists()) dadb.AdbKeyPair.generate(priv, pub);
+                dadbConn = dadb.Dadb.create("127.0.0.1", 5555, dadb.AdbKeyPair.read(priv, pub));
+            }
+            return "$ " + cmd + "\n" + dadbConn.shell(cmd).getAllOutput();
+        } catch (Throwable e) {
+            try { if (dadbConn != null) dadbConn.close(); } catch (Exception ignored) {}
+            dadbConn = null;
+            return "adb error: " + e + " (accept the 'Allow USB debugging' prompt on screen and retry)";
+        }
+    }
+
+    private String services() {
+        StringBuilder sb = new StringBuilder();
+        String[] pkgs = {"com.ifit.glassos_service", "com.ifit.rivendell", "com.ifit.mithlond", "com.ifit.eru", "com.ifit.launcher"};
+        for (String pkg : pkgs) {
+            try {
+                PackageInfo pi = getPackageManager().getPackageInfo(pkg, PackageManager.GET_SERVICES
+                        | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS | PackageManager.GET_ACTIVITIES | PackageManager.GET_PERMISSIONS);
+                sb.append("=== ").append(pkg).append('\n');
+                if (pi.services != null) for (android.content.pm.ServiceInfo si : pi.services)
+                    sb.append("service ").append(si.name).append(" exported=").append(si.exported).append(" perm=").append(si.permission).append('\n');
+                if (pi.receivers != null) for (android.content.pm.ActivityInfo ai : pi.receivers)
+                    sb.append("receiver ").append(ai.name).append(" exported=").append(ai.exported).append(" perm=").append(ai.permission).append('\n');
+                if (pi.providers != null) for (android.content.pm.ProviderInfo ai : pi.providers)
+                    sb.append("provider ").append(ai.name).append(" auth=").append(ai.authority).append(" exported=").append(ai.exported).append(" perm=").append(ai.readPermission).append('\n');
+                if (pi.activities != null) for (android.content.pm.ActivityInfo ai : pi.activities)
+                    if (ai.exported) sb.append("activity ").append(ai.name).append(" perm=").append(ai.permission).append('\n');
+                if (pi.permissions != null) for (android.content.pm.PermissionInfo pe : pi.permissions)
+                    sb.append("defines-perm ").append(pe.name).append(" level=").append(pe.protectionLevel).append('\n');
+            } catch (Exception e) { sb.append(pkg).append(": ").append(e).append('\n'); }
+        }
+        return sb.toString();
     }
 
     // ---------- helpers ----------

@@ -7,13 +7,16 @@ android {
         minSdk 21
         //noinspection ExpiredTargetSdkVersion  (sideloaded only; keeps legacy storage access)
         targetSdk 29
-        versionCode 2
-        versionName '0.2'
+        versionCode 3
+        versionName '0.3'
     }
     signingConfigs {
         test { storeFile file('test.keystore'); storePassword 'ifitrecon'; keyAlias 'test'; keyPassword 'ifitrecon' }
     }
     buildTypes { debug { signingConfig signingConfigs.test } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { resources { excludes += ['META-INF/*'] } }
     lint { abortOnError false; checkReleaseBuilds false }
 }
+
+dependencies { implementation 'dev.mobile:dadb:1.2.9' }
