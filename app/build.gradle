@@ -7,8 +7,8 @@ android {
         minSdk 21
         //noinspection ExpiredTargetSdkVersion  (sideloaded only; keeps legacy storage access)
         targetSdk 29
-        versionCode 5
-        versionName '0.5'
+        versionCode 6
+        versionName '0.6'
     }
     signingConfigs {
         test { storeFile file('test.keystore'); storePassword 'ifitrecon'; keyAlias 'test'; keyPassword 'ifitrecon' }

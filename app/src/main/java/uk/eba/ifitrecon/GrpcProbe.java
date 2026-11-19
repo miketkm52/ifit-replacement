@@ -25,8 +25,9 @@ public class GrpcProbe {
 
     private synchronized ManagedChannel channel() {
         if (channel == null) {
-            AndroidComponentAddress addr = AndroidComponentAddress.forRemoteComponent(
-                    "com.ifit.glassos_service", "com.ifit.glassos_service.GlassOSPlatformService");
+            android.content.Intent bind = new android.content.Intent("com.ifit.glassos_service.GLASSOS_PLATFORM")
+                    .setClassName("com.ifit.glassos_service", "com.ifit.glassos_service.GlassOSPlatformService");
+            AndroidComponentAddress addr = AndroidComponentAddress.forBindIntent(bind);
             channel = BinderChannelBuilder.forAddress(addr, ctx)
                     .securityPolicy(new SecurityPolicy() {
                         @Override public Status checkAuthorization(int uid) { return Status.OK; }

@@ -110,7 +110,7 @@ public class MainActivity extends Activity {
         askStorage();
         startServer();
         startFollower();
-        log("iFit Recon 0.5 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        log("iFit Recon 0.6 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
