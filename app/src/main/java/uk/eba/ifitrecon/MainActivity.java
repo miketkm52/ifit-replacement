@@ -56,6 +56,8 @@ public class MainActivity extends Activity {
     private final java.util.Map<String, String> metrics = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Pattern CHANGED = Pattern.compile("SDS Changed ([A-Z_]+) from (.*) to (.*)$");
     private AdbClient dadbConn;
+    private GrpcProbe grpcProbe;
+    private synchronized GrpcProbe grpc() { if (grpcProbe == null) grpcProbe = new GrpcProbe(this); return grpcProbe; }
     private ScrollView scroll;
     private final StringBuilder report = new StringBuilder();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -108,7 +110,7 @@ public class MainActivity extends Activity {
         askStorage();
         startServer();
         startFollower();
-        log("iFit Recon 0.4 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        log("iFit Recon 0.5 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
@@ -366,6 +368,12 @@ public class MainActivity extends Activity {
             }
             if (path.startsWith("/sh")) return exec(args.get("c"));
             if (path.startsWith("/adb")) return adb(args.get("c"));
+            if (path.startsWith("/grpc")) {
+                try {
+                    byte[] r = grpc().unary(args.get("m"), GrpcProbe.unhex(args.get("req")));
+                    return "OK " + r.length + " bytes\nhex " + GrpcProbe.hex(r) + "\ndecoded " + GrpcProbe.decode(r);
+                } catch (Throwable e) { if (args.containsKey("reset")) grpc().reset(); return "gRPC error: " + e; }
+            }
             if (path.startsWith("/services")) return services();
             if (path.startsWith("/metrics")) return metrics.toString();
             if (path.startsWith("/set")) { prefs().edit().putString("btn_" + args.get("k"), args.get("v")).apply(); return "ok " + args.get("k") + " = " + args.get("v"); }
