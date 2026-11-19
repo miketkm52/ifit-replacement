@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
     private TextView out;
     private TextView stats;
     private final java.util.Map<String, String> metrics = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final Pattern CHANGED = Pattern.compile("SDS Changed ([A-Z_]+) from (.*) to (.*)$");
+    private static final Pattern CHANGED = Pattern.compile("Changed ([A-Z_]+) from (.*?) to (.*)$");
     private AdbClient dadbConn;
     private GrpcProbe grpcProbe;
     private synchronized GrpcProbe grpc() { if (grpcProbe == null) grpcProbe = new GrpcProbe(this); return grpcProbe; }
@@ -94,6 +94,7 @@ public class MainActivity extends Activity {
             final String key = bn;
             ctl.addView(button(bn.replace("res_down", "Res -").replace("res_up", "Res +").toUpperCase(Locale.UK), v -> press(key)));
         }
+        ctl.addView(button("Update", v -> new Thread(() -> log(selfUpdate())).start()));
         ctl.addView(button("Connect ADB", v -> new Thread(() -> log(adb("echo ADB OK as $(id -un)"))).start()));
         root.addView(ctl);
 
@@ -110,7 +111,7 @@ public class MainActivity extends Activity {
         askStorage();
         startServer();
         startFollower();
-        log("iFit Recon 0.6 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
+        log("iFit Recon 0.7 — open http://" + ip() + ":" + PORT + " on your phone to copy this report.");
         log("Tap 1. Scan, then start a MANUAL workout, tap 2. Live log and keep changing speed/incline/resistance.\n");
     }
 
@@ -287,18 +288,55 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try (ServerSocket ss = new ServerSocket(PORT)) {
                 while (true) {
-                    try (Socket s = ss.accept()) {
-                        String req = new BufferedReader(new InputStreamReader(s.getInputStream())).readLine();
-                        byte[] body = route(req).getBytes(StandardCharsets.UTF_8);
-                        OutputStream o = s.getOutputStream();
-                        o.write(("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
-                                + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-                        o.write(body);
-                        o.flush();
-                    } catch (Exception ignored) {}
+                    final Socket sock = ss.accept();
+                    new Thread(() -> serve(sock)).start();
                 }
             } catch (Exception e) { log("web server failed: " + e.getMessage()); }
         }).start();
+    }
+
+    private void serve(Socket s) {
+        try (Socket sk = s) {
+            String req = new BufferedReader(new InputStreamReader(sk.getInputStream())).readLine();
+            OutputStream o = sk.getOutputStream();
+            byte[] body; String type = "text/plain; charset=utf-8";
+            if (req != null && req.contains(" /screen")) {
+                adb("screencap -p /sdcard/recon-screen.png");
+                body = readFile(new File("/sdcard/recon-screen.png"));
+                type = "image/png";
+            } else {
+                body = route(req).getBytes(StandardCharsets.UTF_8);
+            }
+            o.write(("HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nCache-Control: no-store\r\nContent-Length: "
+                    + body.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            o.write(body);
+            o.flush();
+        } catch (Exception ignored) {}
+    }
+
+    private static byte[] readFile(File f) throws Exception {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[16384]; int r;
+            while ((r = in.read(b)) > 0) bo.write(b, 0, r);
+            return bo.toByteArray();
+        }
+    }
+
+    /** Download the latest APK from GitHub and install it over the top via ADB. */
+    private String selfUpdate() {
+        try {
+            java.net.URL u = new java.net.URL("https://github.com/miketkm52/ifit-replacement/releases/download/latest/ifit-recon.apk");
+            java.net.HttpURLConnection c = (java.net.HttpURLConnection) u.openConnection();
+            c.setInstanceFollowRedirects(true);
+            File apk = new File("/sdcard/Download/ifit-recon-update.apk");
+            try (java.io.InputStream in = c.getInputStream(); java.io.FileOutputStream out = new java.io.FileOutputStream(apk)) {
+                byte[] b = new byte[16384]; int r;
+                while ((r = in.read(b)) > 0) out.write(b, 0, r);
+            }
+            log("Update downloaded (" + apk.length() + " bytes), installing...");
+            return adb("pm install -r " + apk.getAbsolutePath() + " && am start -n uk.eba.ifitrecon/.MainActivity");
+        } catch (Exception e) { return "update failed: " + e; }
     }
 
 
@@ -376,6 +414,7 @@ public class MainActivity extends Activity {
             }
             if (path.startsWith("/services")) return services();
             if (path.startsWith("/metrics")) return metrics.toString();
+            if (path.startsWith("/update")) { new Thread(this::selfUpdate).start(); return "updating - app will restart in ~30s"; }
             if (path.startsWith("/set")) { prefs().edit().putString("btn_" + args.get("k"), args.get("v")).apply(); return "ok " + args.get("k") + " = " + args.get("v"); }
             if (path.startsWith("/press")) { String k = args.get("k"); String c = prefs().getString("btn_" + k, null); return c == null ? "not wired" : adb(c); }
             if (path.startsWith("/get")) return prefs().getAll().toString();
